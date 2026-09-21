@@ -1,4 +1,4 @@
-# solar-pv-forecasting-ml
+# Solar-PV-Forecasting-ML
 Machine Learning-Based Solar PV Power Generation Forecasting Using Weather Data (Project 2)
 
 ---
