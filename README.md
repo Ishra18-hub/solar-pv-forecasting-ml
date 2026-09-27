@@ -269,7 +269,7 @@ All random seeds are fixed (`random_state=42`) where used.
 - [x] Plant-level aggregation
 - [x] Merge with weather data
 - [x] Exploratory Data Analysis
-- [ ] Cleaning and feature engineering
+- [x] Cleaning and feature engineering
 - [ ] Chronological split
 - [ ] Model training (Model A vs Model B)
 - [ ] Evaluation and comparison
