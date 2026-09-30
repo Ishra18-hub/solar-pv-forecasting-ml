@@ -16,7 +16,7 @@ A machine learning project that forecasts the next 15-minute AC power output of 
 
 ## 1. Project Overview
 
-Solar PV power generation is inherently intermittent — it depends on solar irradiance, module temperature, and other environmental conditions. Accurate short-term forecasting of PV power output is important for grid stability, energy scheduling, and plant operation.
+Solar PV power generation is inherently intermittent, it depends on solar irradiance, module temperature, and other environmental conditions. Accurate short-term forecasting of PV power output is important for grid stability, energy scheduling, and plant operation.
 
 This project investigates whether **incorporating recent power output history improves short-term solar PV power forecasting compared with using weather-sensor data alone.**
 
@@ -154,23 +154,24 @@ Both plants were compared on multiple dimensions before selecting one:
 - Result: **3,157 rows × 6 columns** — every row has generation and weather data.
 - Verified zero missing values after merge.
 
-### Step 5 — Exploratory Data Analysis 
+### Step 5 — Exploratory Data Analysis (Completed)
 - Descriptive statistics for all variables.
-- Timestamp continuity check (gaps detected and noted).
+- Timestamp continuity check — precise gap detection found 10 irregular timestamp transitions (largest gap: 9 hours).
 - Hourly-average profile (clear daily solar cycle).
-- Correlation analysis (IRRADIATION is strongly correlated with AC_POWER).
+- Correlation analysis (IRRADIATION IRRADIATION strongly correlated with AC_POWER, correlation ≈ 1.00).
 - Distribution analysis (bimodal, dominated by nighttime zeros).
 - Visual inspection: time series, scatter plots, correlation heatmap, histogram.
 
-**EDA findings will be available in `figures/eda_initial.png`.**
+**EDA findings available in `figures/eda_initial.png`.**
 
-### Step 6 — Cleaning and Feature Engineering (In Progress)
-Upcoming tasks:
-- Handle the small number of timestamp gaps detected during EDA.
-- Construct target: `AC_POWER(t+1)`.
-- Construct lag features for Model B: `AC_POWER(t-1)`, `AC_POWER(t-2)`, `AC_POWER(t-3)`.
-- Drop columns that leak future information (`DAILY_YIELD`, `TOTAL_YIELD`).
-- Drop highly collinear column (`DC_POWER`) to avoid redundancy with `AC_POWER`.
+### Step 6 — Cleaning and Feature Engineering (Completed)
+- Dropped leakage-prone and redundant columns: DAILY_YIELD, TOTAL_YIELD (cumulative, leak future info), DC_POWER (perfectly correlated with AC_POWER).
+- Detected 10 irregular timestamp gaps using explicit .diff()-based checking.
+- Constructed target: AC_POWER(t+1) using shift(-1), marked invalid where the (t → t+1) step crossed a gap.
+- Constructed lag features for Model B: AC_POWER(t-1), AC_POWER(t-2), AC_POWER(t-3), marked invalid where any lag step crossed a gap.
+- Dropped 54 rows whose target or lag features were affected by a timestamp gap.
+- **Verified correctness** of target and lag construction via a timestamp-based lookup check (not positional) — confirmed **0 mismatches** for both target and lag1 alignment.
+Final cleaned dataset: **3,103 rows × 9 columns**, saved as df_clean_step6.csv.
 
 ### Step 7 — Chronological Split (Planned)
 - Train: first ~70% of timestamps.
@@ -181,7 +182,7 @@ Upcoming tasks:
 ### Step 8 — Modeling (Planned)
 - Model A (Weather-only) and Model B (Weather + Historical) trained on the same split.
 - Algorithms: Linear Regression (baseline), Random Forest, Gradient Boosting.
-- Advanced models (e.g., LSTM) not planned — dataset size (~3,157 samples) is modest and would not justify them.
+- Advanced models (e.g., LSTM) not planned — dataset size (~3,103 samples after cleaning) is modest and would not justify them.
 
 ### Step 9 — Evaluation (Planned)
 - Metrics: MAE, RMSE, R².
@@ -198,14 +199,29 @@ Time-series forecasting requires strict care to avoid leakage. The following rul
 1. **Chronological splitting only** — no random shuffle at any stage.
 2. **Target shifting is done explicitly** — `y(t) = AC_POWER(t+1)`.
 3. **Lag features use only past values** — `AC_POWER(t-1)` uses data from time `t-1` and earlier.
-4. **Cumulative columns are dropped** — `DAILY_YIELD` and `TOTAL_YIELD` encode future information relative to earlier timestamps.
-5. **Scaling is fitted on training data only** — validation and test sets are transformed using training-set statistics.
-6. **No cross-plant mixing** — only Plant 1 data is used.
-7. **No future weather is used** — only weather measurements already available at time `t` are used to predict `AC_POWER(t+1)`.
+4. **Timestamp gaps are explicitly handled** — rows whose target or lag features would cross a non-15-minute gap are dropped rather than interpolated, to avoid fabricating data.
+5. **Cumulative columns are dropped** — `DAILY_YIELD` and `TOTAL_YIELD` encode future information relative to earlier timestamps.
+6. **Scaling is fitted on training data only** — validation and test sets are transformed using training-set statistics.
+7. **No cross-plant mixing** — only Plant 1 data is used.
+8. **No future weather is used** — only weather measurements already available at time `t` are used to predict `AC_POWER(t+1)`.
 
 ---
 
-## 7. Known Limitations
+## 7. Related Work
+
+This project's dataset (Ani Kannal's Solar Power Generation Data on Kaggle) is widely used, with 400+ public Kaggle notebooks and multiple academic papers using it as a benchmark, including deep-learning approaches such as explainable LSTM-based models. Most published work on this and similar datasets focuses on deep learning architectures (LSTM, CNN, Transformer) for multi-step or probabilistic forecasting.
+
+This project differs by:
+
+- Using a simpler, interpretable tree-based / linear modeling approach appropriate for a modest dataset size (~3,100 samples).
+- Explicitly isolating the marginal contribution of historical power lags versus weather-only features through a controlled A/B model comparison on an identical chronological split.
+- Applying explicit, verified data-leakage prevention (timestamp-based verification of target/lag construction) rather than relying on standard train-test splitting alone.
+
+**(Full citation list to be added in the final report.)**
+
+---
+
+## 8. Known Limitations
 
 The project's claims are bounded by the following limitations:
 
@@ -216,28 +232,31 @@ The project's claims are bounded by the following limitations:
 5. **Potential sensor and inverter errors:** Data was checked for obvious issues, but real-world measurement noise is unavoidable.
 6. **No production deployment:** This is a research/study project on historical data.
 7. **Weather variables limited to three:** The dataset does not include humidity, wind speed, or cloud cover. The project does not fabricate these.
+8. **Row loss from gap handling:** 54 rows (~1.7%) were dropped during Step 6 due to timestamp gaps; this is a controlled, documented decision rather than an incidental loss.
 
 ---
 
-## 8. Repository Structure
+## 9. Repository Structure
 
 solar-pv-forecasting-ml/
 ├── README.md
 ├── notebooks/
-│ └── 01_data_audit_eda.ipynb Data loading, audit, merge, EDA
+│   ├── 00_data_exploration_plant_selection.ipynb   Initial audit, plant comparison, format verification
+│   ├── 01_data_audit_eda.ipynb                     Aggregation, merge, EDA
+│   └── 02_feature_engineering.ipynb                Cleaning, target/lag construction, verification
 ├── figures/
-│ └── eda_initial.png EDA composite plot
+│   └── eda_initial.png                             EDA composite plot
 ├── data/
-│ └── README.md Dataset source and licensing info
+│   └── README.md                                   Dataset source and licensing info
 └── results/
-└── (to be added) Model results, metrics, comparison
+    └── (to be added)                               Model results, metrics, comparison
 
 
-**Raw CSV files are NOT uploaded to this repository** — they belong to the original Kaggle dataset. Only the download link and license note are provided.
+**Raw CSV files are NOT uploaded to this repository** — they belong to the original Kaggle dataset. Only the download link and license note are provided. they belong to the original Kaggle dataset. Only the download link and license note are provided. The cleaned dataset (df_clean_step6.csv) is also not committed to the repository, following the same principle — it is fully reproducible from 02_feature_engineering.ipynb.
 
 ---
 
-## 9. Tools and Libraries
+## 10. Tools and Libraries
 
 - **Python 3** (Google Colab)
 - **pandas** — data loading, manipulation, aggregation, merging
@@ -247,16 +266,17 @@ solar-pv-forecasting-ml/
 
 ---
 
-## 10. Reproducibility
+## 11. Reproducibility
 
 To reproduce this project:
 
 1. Download the dataset from Kaggle:  
    https://www.kaggle.com/anikannal/solar-power-generation-data
 2. Upload the four CSV files to a local folder (or Google Drive).
-3. Open `notebooks/01_data_audit_eda.ipynb` in Google Colab or Jupyter.
-4. Update the `folder` variable to point to the CSV location.
-5. Run the notebook cells sequentially.
+3. Open notebooks/00_data_exploration_plant_selection.ipynb and notebooks/01_data_audit_eda.ipynb in Google Colab or Jupyter to reproduce the audit, plant selection, aggregation, merge, and EDA.
+4. Open notebooks/02_feature_engineering.ipynb to reproduce the cleaning, target/lag construction, gap handling, and verification steps.
+5. Update the `folder` variable to point to the CSV location.
+6. Run the notebook cells sequentially.
 
 All random seeds are fixed (`random_state=42`) where used.
 
