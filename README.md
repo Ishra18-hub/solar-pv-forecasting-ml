@@ -295,7 +295,7 @@ All random seeds are fixed (`random_state=42`) where used.
 - [x] Merge with weather data
 - [x] Exploratory Data Analysis
 - [x] Cleaning and feature engineering
-- [ ] Chronological split
+- [x] Chronological split
 - [ ] Model training (Model A vs Model B)
 - [ ] Evaluation and comparison
 - [ ] Final report
