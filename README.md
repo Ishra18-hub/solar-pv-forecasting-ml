@@ -173,11 +173,15 @@ Both plants were compared on multiple dimensions before selecting one:
 - **Verified correctness** of target and lag construction via a timestamp-based lookup check (not positional) — confirmed **0 mismatches** for both target and lag1 alignment.
 Final cleaned dataset: **3,103 rows × 9 columns**, saved as df_clean_step6.csv.
 
-### Step 7 — Chronological Split (Planned)
-- Train: first ~70% of timestamps.
-- Validation: next ~15%.
-- Test: last ~15%.
-- No shuffling. Ever.
+### Step 7 — Chronological Split (Completed)
+- Split the cleaned dataset (3,103 rows) into train, validation, and test 
+  sets strictly in time order — no shuffling at any stage.
+- **Train:** 2,172 rows (2020-05-15 to 2020-06-08) — 70.0%
+- **Validation:** 465 rows (2020-06-08 to 2020-06-13) — 15.0%
+- **Test:** 466 rows (2020-06-13 to 2020-06-17) — 15.0%
+- **Verified programmatically** (via `assert` statements) that no temporal 
+  overlap exists between train, validation, and test sets — confirming 
+  the split strictly follows chronological order with zero leakage risk.
 
 ### Step 8 — Modeling (Planned)
 - Model A (Weather-only) and Model B (Weather + Historical) trained on the same split.
@@ -196,7 +200,8 @@ Final cleaned dataset: **3,103 rows × 9 columns**, saved as df_clean_step6.csv.
 
 Time-series forecasting requires strict care to avoid leakage. The following rules are applied throughout:
 
-1. **Chronological splitting only** — no random shuffle at any stage.
+1. **Chronological splitting only** — no random shuffle at any stage. Verified programmatically with assertion checks (train/val/test date 
+   ranges confirmed strictly non-overlapping).
 2. **Target shifting is done explicitly** — `y(t) = AC_POWER(t+1)`.
 3. **Lag features use only past values** — `AC_POWER(t-1)` uses data from time `t-1` and earlier.
 4. **Timestamp gaps are explicitly handled** — rows whose target or lag features would cross a non-15-minute gap are dropped rather than interpolated, to avoid fabricating data.
