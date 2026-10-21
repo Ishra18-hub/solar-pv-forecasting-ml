@@ -21,7 +21,7 @@ The project is developed as an independent machine learning study, building on t
 - Data leakage prevention
 - A controlled, reproducible model comparison
 
-**Main finding (on this dataset):** adding recent AC power history did **not** produce a statistically detectable improvement at any of the three horizons. Knowing the time of day helped more than knowing past power (Section 6).
+**Main finding (on this dataset):** adding recent AC power history did **not** produce a statistically detectable improvement at any of the three horizons. Knowing the time of day helped more than knowing past power, and a simple smart-persistence benchmark is hard to beat at 15 minutes (Section 6).
 
 ---
 
@@ -29,7 +29,7 @@ The project is developed as an independent machine learning study, building on t
 
 > **Does incorporating recent AC power history improve short-term (15-, 30- and 60-minute-ahead) solar PV power forecasting compared with weather-sensor data alone?**
 
-Four feature sets are compared on the same chronological split, together with a no-training persistence benchmark. For a horizon of `h` steps (1 step = 15 minutes) every model predicts `AC_POWER(t+h)`.
+Four feature sets are compared on the same chronological split, together with three no-training benchmarks. For a horizon of `h` steps (1 step = 15 minutes) every model predicts `AC_POWER(t+h)`.
 
 | Name | Input features (all measured at time `t`) | Purpose |
 |---|---|---|
@@ -37,7 +37,9 @@ Four feature sets are compared on the same chronological split, together with a 
 | **Model A+time** | Model A + `hour_sin`, `hour_cos` | Control: does knowing the time of day alone help? |
 | **Model B** (weather + power history) | Model A + `AC_POWER(t)`, `AC_POWER(t-1)`, `AC_POWER(t-2)`, `AC_POWER(t-3)` | Tests the research question |
 | **Model B+time** | Model B + `hour_sin`, `hour_cos` | Fair partner of A+time |
-| **Persistence** | none: `AC_POWER(t+h) = AC_POWER(t)` | Standard benchmark for short-term forecasts |
+| **Persistence** | none: `AC_POWER(t+h) = AC_POWER(t)` | Naive benchmark |
+| **Same time yesterday** | none: `AC_POWER(t+h) = AC_POWER(t+h−24h)` | Diurnal-cycle benchmark |
+| **Smart persistence** | none: persistence of the clear-sky index, with an empirical clear-sky envelope per time of day (95th percentile of AC power over the training/validation days) | Stronger benchmark that removes the daily cycle (the dataset has no coordinates, so a physical clear-sky model is not available) |
 
 | Horizon | Steps `h` | Target |
 |---|---|---|
@@ -142,7 +144,9 @@ Both plants were compared on multiple dimensions before selecting one:
 - Plant 1 selected based on the data-driven comparison in Section 4.
 
 ### Step 3: Plant-Level Aggregation (Completed)
-- Inverter-level generation data (22 rows per timestamp) aggregated to plant level using `groupby("DATE_TIME")` with sum.
+- Inverter-level generation data (22 rows per timestamp) aggregated to plant level.
+- In notebook 01 this was a plain sum (`groupby("DATE_TIME")` with sum). **Correction (notebook 02b):** 101 of 3,158 timestamps (3.2%) have fewer than 22 inverters reporting (10 of them in daytime, where the plant total was understated by 22% on average and by up to 82%). Plant-level AC power is therefore computed as **mean inverter AC power × 22**, which stays on the same scale when an inverter is missing.
+- Sensitivity check: re-running all models with the original sum aggregation changed daytime MAE by at most 0.4% (RMSE by at most 0.6%), selected the same algorithms, and did not change any conclusion.
 - Result: 3,158 plant-level rows.
 
 ### Step 4: Merge with Weather Data (Completed)
@@ -205,8 +209,8 @@ Daily insolation (sum of `IRRADIATION` × 0.25 h) averages 5.37 kWh/m² in train
 ### Step 9: Evaluation (Completed, notebook 04)
 - Metrics: MAE, RMSE, R² on all rows and on **daytime rows** (06:00 ≤ target time < 18:00).
 - MAPE is not used because `AC_POWER` is zero at night.
-- Skill score versus persistence: `1 − RMSE_model / RMSE_persistence` (daytime).
-- **Paired moving-block bootstrap** (2,000 resamples, blocks of 16 consecutive daytime rows = 4 hours) for the error difference between models with and without power history. Block resampling is used because errors in neighbouring 15-minute rows are strongly correlated.
+- Three benchmarks (persistence, same time yesterday, smart persistence) and skill scores against persistence and against smart persistence. The smart-persistence envelope uses training and validation days only.
+- **Paired moving-block bootstrap** (2,000 resamples, blocks of 16 consecutive daytime rows = 4 hours) for error differences (model without vs with power history; smart persistence vs ML models), reported in kW and as a percentage of the reference error. Block resampling is used because errors in neighbouring 15-minute rows are strongly correlated.
 - Error by test day, actual-vs-predicted plots and tree-based feature importance.
 - A diagnostic ("oracle") analysis explains why history adds so little (Section 6).
 
@@ -215,58 +219,77 @@ Daily insolation (sum of `IRRADIATION` × 0.25 h) averages 5.37 kWh/m² in train
 ## 6. Results
 
 All numbers are on the **held-out test set (5 days)**. Daytime = 06:00–18:00 at target time. Full tables are in `results/`.
+Skill = 1 − RMSE_model / RMSE_benchmark (daytime); positive means better than the benchmark.
 
-### 6.1 Daytime test performance
+### 6.1 Daytime test performance (benchmarks and models)
 
-| Horizon | Model | Algorithm (chosen on validation) | MAE (kW) | RMSE (kW) | R² | Skill vs persistence |
-|---|---|---|---|---|---|---|
-| 15 min | Persistence | none | 2,395 | 3,296 | 0.802 | n/a |
-| 15 min | A | Random Forest | 2,209 | 3,232 | 0.810 | 1.9% |
-| 15 min | A+time | Gradient Boosting | 2,117 | 3,027 | 0.833 | 8.1% |
-| 15 min | B | Random Forest | 2,201 | 3,154 | 0.819 | 4.3% |
-| 15 min | B+time | Random Forest | 2,114 | 3,000 | 0.836 | 9.0% |
-| 30 min | Persistence | none | 3,487 | 4,472 | 0.637 | n/a |
-| 30 min | A | Gradient Boosting | 3,027 | 4,166 | 0.685 | 6.9% |
-| 30 min | A+time | Gradient Boosting | 2,668 | 3,692 | 0.752 | 17.4% |
-| 30 min | B | Random Forest | 2,957 | 4,181 | 0.683 | 6.5% |
-| 30 min | B+time | Gradient Boosting | 2,634 | 3,660 | 0.757 | 18.2% |
-| 60 min | Persistence | none | 4,676 | 5,733 | 0.412 | n/a |
-| 60 min | A | Random Forest | 3,536 | 4,945 | 0.562 | 13.7% |
-| 60 min | A+time | Gradient Boosting | 2,908 | 3,932 | 0.723 | 31.4% |
-| 60 min | B | Random Forest | 3,452 | 4,740 | 0.598 | 17.3% |
-| 60 min | B+time | Gradient Boosting | 3,004 | 4,002 | 0.713 | 30.2% |
+| Horizon | Model | Algorithm (chosen on validation) | MAE (kW) | RMSE (kW) | R² | Skill vs persistence | Skill vs smart persistence |
+|---|---|---|---|---|---|---|---|
+| 15min | Persistence | none | 2,395 | 3,296 | 0.802 | n/a | -5.3% |
+| 15min | Same time yesterday | none | 3,983 | 5,450 | 0.459 | -65.4% | -74.2% |
+| 15min | Smart persistence | none | 2,182 | 3,129 | 0.822 | +5.0% | n/a |
+| 15min | A | Random Forest | 2,210 | 3,233 | 0.810 | +1.9% | -3.3% |
+| 15min | A+time | Gradient Boosting | 2,111 | 3,046 | 0.831 | +7.6% | +2.7% |
+| 15min | B | Random Forest | 2,200 | 3,156 | 0.819 | +4.2% | -0.9% |
+| 15min | B+time | Random Forest | 2,111 | 2,984 | 0.838 | +9.4% | +4.6% |
+| 30min | Persistence | none | 3,487 | 4,472 | 0.637 | n/a | -11.1% |
+| 30min | Same time yesterday | none | 3,998 | 5,462 | 0.458 | -22.1% | -35.7% |
+| 30min | Smart persistence | none | 2,932 | 4,025 | 0.706 | +10.0% | n/a |
+| 30min | A | Gradient Boosting | 3,036 | 4,184 | 0.682 | +6.4% | -4.0% |
+| 30min | A+time | Gradient Boosting | 2,675 | 3,700 | 0.751 | +17.3% | +8.1% |
+| 30min | B | Random Forest | 2,955 | 4,181 | 0.682 | +6.5% | -3.9% |
+| 30min | B+time | Gradient Boosting | 2,644 | 3,672 | 0.755 | +17.9% | +8.8% |
+| 60min | Persistence | none | 4,676 | 5,733 | 0.412 | n/a | -28.4% |
+| 60min | Same time yesterday | none | 3,983 | 5,458 | 0.467 | +4.8% | -22.2% |
+| 60min | Smart persistence | none | 3,301 | 4,465 | 0.643 | +22.1% | n/a |
+| 60min | A | Random Forest | 3,534 | 4,944 | 0.563 | +13.8% | -10.7% |
+| 60min | A+time | Gradient Boosting | 2,908 | 3,918 | 0.725 | +31.7% | +12.2% |
+| 60min | B | Random Forest | 3,451 | 4,738 | 0.598 | +17.3% | -6.1% |
+| 60min | B+time | Gradient Boosting | 3,005 | 4,003 | 0.713 | +30.2% | +10.3% |
 
-All-hours metrics are in `results/results_selected.csv`. They are better for every model (night rows are trivially zero) and are therefore less informative about the research question.
+All-hours metrics are in `results/results_selected.csv` and `results/results_baselines.csv`. They look better for every model (night rows are trivially zero) and are therefore less informative about the research question.
 
 ![Daytime error vs horizon](results/horizon_comparison.png)
 
 ### 6.2 Does power history help? (paired block bootstrap, daytime)
 
-Gain = error without history − error with history, in kW. **Positive means power history helps.** 95% confidence intervals in brackets.
+Gain = error of the reference − error of the compared model, in kW. **Positive means the compared model (with power history) is better.** The % column divides by the reference model's error, so it states how large an improvement could plausibly be.
 
-| Horizon | Comparison (without → with history) | MAE gain | RMSE gain |
-|---|---|---|---|
-| 15 min | A → B | +8 [−73, +105] | +78 [−55, +229] |
-| 15 min | A+time → B+time | +4 [−81, +82] | +28 [−93, +154] |
-| 30 min | A → B | +70 [−53, +233] | −15 [−167, +184] |
-| 30 min | A+time → B+time | +35 [−40, +127] | +32 [−68, +139] |
-| 60 min | A → B | +84 [−94, +282] | +205 [0, +405] |
-| 60 min | A+time → B+time | −96 [−179, −4] | −70 [−180, +24] |
+| Horizon | Comparison (reference → compared) | MAE gain, kW [95% CI] | MAE gain as % of reference (95% CI) | RMSE gain, kW [95% CI] |
+|---|---|---|---|---|
+| 15min | A → B | +9 [-74, +107] | -3.3% to +4.8% | +76 [-58, +229] |
+| 15min | A+time → B+time | 0 [-69, +71] | -3.2% to +3.4% | +62 [-72, +197] |
+| 30min | A → B | +81 [-40, +256] | -1.3% to +8.4% | +3 [-150, +228] |
+| 30min | A+time → B+time | +32 [-51, +123] | -1.9% to +4.6% | +28 [-74, +133] |
+| 60min | A → B | +84 [-103, +291] | -2.9% to +8.2% | +205 [-1, +408] |
+| 60min | A+time → B+time | -97 [-191, +20] | -6.6% to +0.7% | -85 [-190, +30] |
 
-(The extra comparison A+time → B is in `results/bootstrap_comparison.csv`.)
+### 6.3 Does machine learning beat smart persistence? (paired block bootstrap, daytime)
 
-### 6.3 Interpretation
+| Horizon | Comparison (reference → compared) | MAE gain, kW [95% CI] | MAE gain as % of reference (95% CI) | RMSE gain, kW [95% CI] |
+|---|---|---|---|---|
+| 15min | SmartPersistence → A+time | +71 [-89, +236] | -4.1% to +10.8% | +83 [-76, +274] |
+| 15min | SmartPersistence → B+time | +71 [-62, +222] | -2.8% to +10.2% | +145 [0, +322] |
+| 30min | SmartPersistence → A+time | +257 [+33, +483] | +1.1% to +16.5% | +325 [+97, +575] |
+| 30min | SmartPersistence → B+time | +289 [+99, +505] | +3.4% to +17.2% | +353 [+169, +577] |
+| 60min | SmartPersistence → A+time | +393 [+67, +751] | +2.0% to +22.7% | +547 [+219, +924] |
+| 60min | SmartPersistence → B+time | +296 [+16, +608] | +0.5% to +18.4% | +462 [+173, +804] |
 
-1. **Power history gave no reliably detectable benefit.** For MAE, every A → B interval includes zero. At 15 minutes the interval for A → B is about −73 to +105 kW on an error of roughly 2,200 kW, so any real benefit is probably below about 5%. At 60 minutes the A → B RMSE interval only just reaches zero (0 to +405 kW) while the MAE interval includes zero; this is treated as inconclusive. "No significant difference" is not proof of "no effect", especially with a 5-day test window.
-2. **Time of day mattered more than power history**, especially at longer horizons: at 60 minutes, A+time reduces daytime MAE by about 18% relative to A. When time of day is available, adding history does not help (and at 60 minutes B+time is slightly worse than A+time).
-3. **All models beat persistence, but only modestly at 15 minutes** (skill 2–9%). The advantage grows with the horizon because persistence degrades quickly.
-4. **Why history adds so little:** `AC_POWER(t)` is almost a function of `IRRADIATION(t)` (correlation 0.996), so power lags carry nearly the same information as the weather features already in Model A. A diagnostic where a simple model is given the irradiation at the *target* time (not a valid forecast) reaches daytime MAE ≈ 751–755 kW and R² ≈ 0.98 at every horizon, versus ≈ 2,100–3,500 kW for real models. The limit is therefore the unpredictability of future irradiation (cloud-driven fluctuations), not the choice of model:
+(All paired comparisons, including A+time → B, are in `results/bootstrap_comparison.csv`.)
+
+### 6.4 Interpretation
+
+1. **Power history gave no reliably detectable benefit.** Every A → B and A+time → B+time MAE interval includes zero. The 95% intervals for the A → B MAE gain correspond to relative changes of -3.3% to +4.8% at 15 minutes, -1.3% to +8.4% at 30 minutes and -2.9% to +8.2% at 60 minutes. In words: **in this test window, an MAE improvement from power history larger than about 4.8% at 15 minutes is excluded, but at 30 and 60 minutes gains of up to about 8% cannot be ruled out.** The RMSE intervals are wider (upper bound at 15 minutes: +7.1%), and at 60 minutes the A → B RMSE interval only just reaches zero (about −1 to +408 kW), which is treated as inconclusive. "No significant difference" is not proof of "no effect", especially with a 5-day test window.
+2. **Time of day mattered more than power history.** Adding `hour_sin`/`hour_cos` to Model A reduced daytime MAE by 4.5% (15 min), 11.9% (30 min) and 17.7% (60 min). Once time of day is included, adding history does not help: A+time → B+time has MAE intervals that include zero at every horizon, with a negative point estimate at 60 minutes (-97 kW).
+3. **Plain persistence is a weak benchmark; smart persistence is strong.** Same time yesterday is poor at 15 and 30 minutes (daytime MAE 3,983 and 3,998 kW) and only beats plain persistence at 60 minutes. Smart persistence (clear-sky-index persistence with an empirical envelope) reaches a daytime MAE of 2,182 kW at 15 minutes, **better than weather-only Model A (2,210 kW) and Model B (2,200 kW)**. Against smart persistence, Models A and B have negative skill at every horizon (-3.3% / -0.9% at 15 min; -10.7% / -6.1% at 60 min).
+4. **Machine learning reliably beats smart persistence only at 30–60 minutes, and only with time of day.** At 15 minutes the A+time and B+time gains over smart persistence (+71 kW for A+time, interval -89 to +236) are not distinguishable from zero. At 30 minutes (+257 kW for A+time, +289 kW for B+time) and 60 minutes (+393 and +296 kW) the MAE intervals exclude zero.
+5. **Why history adds so little:** `AC_POWER(t)` is almost a function of `IRRADIATION(t)` (correlation 0.996), so power lags carry nearly the same information as the weather features already in Model A. A diagnostic where a simple model is given the irradiation at the *target* time (not a valid forecast) reaches daytime MAE ≈ 750–754 kW and R² ≈ 0.98 at every horizon, versus ≈ 2,100–3,500 kW for real models. The limit is the unpredictability of future irradiation (cloud-driven fluctuations), not the choice of model:
 
 | Horizon | Mean abs. irradiation change over the horizon (kW/m²) | Share of daytime rows with change > 0.1 kW/m² | Oracle daytime MAE (kW) | Oracle daytime R² |
 |---|---|---|---|---|
-| 15 min | 0.091 | 31% | 751 | 0.981 |
-| 30 min | 0.123 | 47% | 754 | 0.980 |
-| 60 min | 0.170 | 65% | 755 | 0.980 |
+| 15min | 0.091 | 31% | 750 | 0.981 |
+| 30min | 0.123 | 47% | 752 | 0.981 |
+| 60min | 0.170 | 65% | 754 | 0.980 |
 
 (Mean daytime irradiation is about 0.45 kW/m².) See `results/diagnostic_oracle_irradiation.csv`.
 
@@ -287,6 +310,8 @@ Time-series forecasting requires strict care to avoid leakage. The following rul
 9. **The reported algorithm for each model is selected on validation, not test.**
 10. **No cross-plant mixing:** only Plant 1 data is used.
 11. **No future weather is used:** only measurements available at time `t` predict `AC_POWER(t+h)`. Time-of-day features are derived from the timestamp at `t`.
+12. **Benchmark envelope uses training/validation days only:** the smart-persistence clear-sky envelope is never estimated from test days.
+13. **Same-time-yesterday reads only past values** (`t+h−24h` is earlier than `t` for all horizons used).
 
 ---
 
@@ -318,6 +343,8 @@ This project differs by:
 9. **Small hyperparameter grids and one split:** with ~2,100 training rows, differences between algorithms are often within noise.
 10. **Daytime definition:** daytime is fixed at 06:00–18:00 at target time, following the window used in the plant-selection analysis.
 11. **Negative result is conditional:** the absence of a detectable benefit from power history applies to this dataset, these features (three lags) and these horizons.
+12. **Smart persistence is empirical:** its clear-sky envelope is estimated from ~29 days of plant data, not from a physical clear-sky model, and may be noisy.
+13. **Single plant so far:** Plant 2 has not been evaluated; it has 28% of timestamps with fewer than 22 inverters and needs the same corrected aggregation.
 
 ---
 
@@ -330,7 +357,7 @@ solar-pv-forecasting-ml/
 │   ├── 00_data_exploration_plant_selection.ipynb   Initial audit, plant comparison, format verification
 │   ├── 01_data_audit_eda.ipynb                     Aggregation, merge, EDA
 │   ├── 02_feature_engineering.ipynb                First version (15-min only), kept as a record
-│   ├── 02b_multihorizon_features.ipynb             Multi-horizon targets/lags, time features, verification
+│   ├── 02b_multihorizon_features.ipynb             Plant aggregation fix, multi-horizon targets/lags, time features, verification
 │   ├── 03_Chronological_split.ipynb                First split (row index), kept as a record
 │   ├── 03b_chronological_split_multihorizon.ipynb  Day-boundary split with boundary purge
 │   └── 04_modeling_evaluation.ipynb                Models, evaluation, bootstrap, diagnostic
@@ -341,7 +368,7 @@ solar-pv-forecasting-ml/
 └── results/
     ├── results_selected.csv                        Selected model per horizon and feature set
     ├── results_all_models.csv                      All algorithms
-    ├── results_persistence.csv                     Persistence benchmark
+    ├── results_baselines.csv                       Persistence, same-time-yesterday, smart persistence
     ├── bootstrap_comparison.csv                    Paired block-bootstrap comparisons
     ├── error_by_test_day.csv                       Daytime MAE per test day
     ├── diagnostic_oracle_irradiation.csv           Oracle diagnostic
@@ -392,6 +419,9 @@ All random seeds are fixed (`random_state=42` for Random Forest and Gradient Boo
 - [ ] Model training (A, A+time, B, B+time; three horizons)
 - [ ] Evaluation and comparison (persistence, daytime metrics, block bootstrap)
 - [ ] Diagnostic analysis of why history adds little
+- [ ] Additional benchmarks (same time yesterday, smart persistence) and aggregation fix with sensitivity check
+- [ ] Plant 2 robustness check
+- [ ] Literature review for Related Work (with verified citations)
 - [ ] Final report (with full citation list)
 
 ---
